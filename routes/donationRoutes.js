@@ -4,12 +4,14 @@ import {
   getUserDonations,
   getAllDonations,
   updateDonationStatus,
-  getDonationStats
+  getDonationStats,
+  createPaymentIntent
 } from '../controllers/donationController.js';
 import { protect, admin } from '../middleware/auth.js';
 
 const router = express.Router();
 
+router.post('/create-payment-intent', protect, createPaymentIntent); // Naya route
 router.post('/', protect, createDonation);
 router.get('/my-donations', protect, getUserDonations);
 router.get('/stats', protect, admin, getDonationStats);

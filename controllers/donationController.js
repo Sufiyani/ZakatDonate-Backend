@@ -1,10 +1,28 @@
 import Donation from '../models/Donation.js';
 import Campaign from '../models/Campaign.js';
+import Stripe from 'stripe';
+import dotenv from 'dotenv';
 
+dotenv.config();
+const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
+
+// Payment Intent generate karne ke liye (Sirf Online ke liye)
+export const createPaymentIntent = async (req, res) => {
+  try {
+    const { amount } = req.body;
+    const paymentIntent = await stripe.paymentIntents.create({
+      amount: Math.round(amount * 100), // Stripe takes amount in cents
+      currency: 'pkr',
+    });
+    res.json({ clientSecret: paymentIntent.client_secret });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
 
 export const createDonation = async (req, res) => {
   try {
-    const { amount, type, category, paymentMethod, campaignId } = req.body;
+    const { amount, type, category, paymentMethod, campaignId, stripePaymentId } = req.body;
 
     const donationData = {
       user: req.user._id,
@@ -12,7 +30,9 @@ export const createDonation = async (req, res) => {
       type,
       category,
       paymentMethod,
-      transactionId: `TXN${Date.now()}${Math.floor(Math.random() * 1000)}`
+      // Agar payment Online hui hai toh Verified, warna aapka purana logic 'Pending'
+      status: paymentMethod === 'Online' ? 'Verified' : 'Pending',
+      transactionId: stripePaymentId || `TXN${Date.now()}${Math.floor(Math.random() * 1000)}`
     };
 
     if (campaignId) {
@@ -25,7 +45,7 @@ export const createDonation = async (req, res) => {
 
     const donation = await Donation.create(donationData);
 
-    
+    // Campaign amount tabhi barhega jab donation create hogi
     if (campaignId) {
       await Campaign.findByIdAndUpdate(campaignId, {
         $inc: { raisedAmount: amount }
@@ -65,17 +85,11 @@ export const getAllDonations = async (req, res) => {
   }
 };
 
-// @desc    Update donation status (Admin)
-// @route   PUT /api/donations/:id/status
-// @access  Private/Admin
 export const updateDonationStatus = async (req, res) => {
   try {
     const { status } = req.body;
     const donation = await Donation.findById(req.params.id);
-
-    if (!donation) {
-      return res.status(404).json({ message: 'Donation not found' });
-    }
+    if (!donation) return res.status(404).json({ message: 'Donation not found' });
 
     donation.status = status;
     await donation.save();
@@ -83,30 +97,18 @@ export const updateDonationStatus = async (req, res) => {
     const updatedDonation = await Donation.findById(donation._id)
       .populate('user', 'name email')
       .populate('campaign', 'title');
-
     res.json(updatedDonation);
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
 };
 
-// @desc    Get donation statistics (Admin)
-// @route   GET /api/donations/stats
-// @access  Private/Admin
 export const getDonationStats = async (req, res) => {
   try {
     const totalDonations = await Donation.countDocuments();
-    const totalAmount = await Donation.aggregate([
-      { $group: { _id: null, total: { $sum: '$amount' } } }
-    ]);
-    const verifiedAmount = await Donation.aggregate([
-      { $match: { status: 'Verified' } },
-      { $group: { _id: null, total: { $sum: '$amount' } } }
-    ]);
-    const pendingAmount = await Donation.aggregate([
-      { $match: { status: 'Pending' } },
-      { $group: { _id: null, total: { $sum: '$amount' } } }
-    ]);
+    const totalAmount = await Donation.aggregate([{ $group: { _id: null, total: { $sum: '$amount' } } }]);
+    const verifiedAmount = await Donation.aggregate([{ $match: { status: 'Verified' } }, { $group: { _id: null, total: { $sum: '$amount' } } }]);
+    const pendingAmount = await Donation.aggregate([{ $match: { status: 'Pending' } }, { $group: { _id: null, total: { $sum: '$amount' } } }]);
 
     res.json({
       totalDonations,
